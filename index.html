@@ -102,7 +102,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>ヒットコール <small style="font-weight:400">v2</small></h1>
+  <h1>ヒットコール <small style="font-weight:400">v3</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -122,6 +122,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
     </svg>
     <p class="status" id="status">未接続</p>
     <p class="sub" id="sub">センサーの電源を入れて「センサーに接続」を押してください</p>
+    <p class="hint rx" id="lastRx" style="text-align:center;margin:-8px 0 12px"></p>
     <button class="btn primary" id="connectBtn">センサーに接続</button>
     <div class="btns" style="justify-content:center">
       <button class="btn small" id="disconnectBtn" hidden>切断する</button>
@@ -156,6 +157,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
     <div class="row">
       <label for="mode">鳴らす条件</label>
       <select id="mode">
+        <option value="change">待機中と違うデータが届いたら（おすすめ）</option>
         <option value="any">センサーから何か届いたら</option>
         <option value="match">特定のデータが届いたら</option>
       </select>
@@ -239,7 +241,7 @@ async function kvDel(k){
   }catch(e){}
 }
 
-const DEFAULTS = {volume:80, loop:true, duration:30, mode:'any', pattern:'', cooldown:3, warn:true, prefix:'iFish', uuids:''};
+const DEFAULTS = {volume:80, loop:true, duration:30, mode:'change', pattern:'', cooldown:3, warn:true, prefix:'iFish', uuids:''};
 let S = {...DEFAULTS};
 function save(){ kvSet('settings', S); }
 
@@ -304,9 +306,8 @@ async function unlockAudio(){
   try{
     const g = gain ? gain.gain.value : 0;
     if(gain) gain.gain.value = 0; else audioEl.muted = true;
-    await audioEl.play(); audioEl.pause(); audioEl.currentTime = 0;
+    try{ await audioEl.play(); audioEl.pause(); audioEl.currentTime = 0; unlocked = true; }catch(e){}
     if(gain) gain.gain.value = g; else audioEl.muted = false;
-    unlocked = true;
   }catch(e){}
 }
 async function playAlarm(){
@@ -355,7 +356,7 @@ const COMMON_SERVICES = [
   '0000fe59-0000-1000-8000-00805f9b34fb'
 ];
 let device=null, server=null, connectedAt=0, manual=false, tries=0, retryT=null;
-let learning=false, lastHit=0, hitCount=0, wake=null;
+let idleSet=new Set(), learning=false, lastHit=0, hitCount=0, wake=null;
 
 function parseUuids(str){
   return (str||'').split(/[,\s]+/).map(s=>s.trim().toLowerCase()).filter(Boolean).map(s=>{
@@ -415,7 +416,7 @@ async function openGatt(){
       }
     }
     $('#discList').innerHTML = disc.length ? disc.map(t=>'<li>'+t+'</li>').join('') : '<li>サービスが見つかりません。詳細設定でUUIDを追加してください</li>';
-    connectedAt = Date.now(); tries=0;
+    connectedAt = Date.now(); tries=0; idleSet = new Set();
     if(subs===0){
       setState('connected','接続済み（受信先なし）','通知できる特性が見つかりません。「接続できないとき」を開いてください');
     }else{
@@ -431,12 +432,16 @@ async function openGatt(){
 function onValue(ev){
   const c = ev.target, hex = toHex(c.value);
   addRx(shortUuid(c.uuid), hex);
-  if(Date.now()-connectedAt < 1500) return; // 接続直後の状態通知は無視
+  const key = shortUuid(c.uuid)+':'+norm(hex);
+  $('#lastRx').textContent = '最新の受信 '+hhmmss()+'　'+shortUuid(c.uuid)+'：'+hex;
+  // 接続後5秒間に届いたデータは「待機中のデータ」として覚え、ヒット判定しない
+  if(Date.now()-connectedAt < 5000){ idleSet.add(key); return; }
   if(learning){
     learning=false; S.pattern=hex; S.mode='match'; save(); fillForm();
     $('#learnBtn').textContent='次の信号を覚える';
     toast('ヒット信号を登録しました：'+hex); return;
   }
+  if(S.mode==='change' && idleSet.has(key)) return;
   if(S.mode==='match'){
     const p=norm(S.pattern);
     if(!p || !norm(hex).includes(p)) return;
@@ -544,6 +549,7 @@ $('#clearLog').addEventListener('click', ()=>{ $('#hitLog').innerHTML=''; $('#rx
   if(!navigator.bluetooth) $('#noBle').hidden=false;
   const saved = await kvGet('settings');
   if(saved) S = {...DEFAULTS, ...saved};
+  if(!S.ver || S.ver<3){ S.mode='change'; S.pattern=''; S.ver=3; save(); }
   fillForm();
   await loadSound();
   setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください');
