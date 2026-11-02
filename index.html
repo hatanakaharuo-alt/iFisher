@@ -110,6 +110,16 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 .sensor small{color:var(--muted);font-size:12px}
 .dot{width:12px;height:12px;border-radius:50%;flex:none}
 .dot.on{background:var(--ok)} .dot.off{background:var(--danger)}
+#sheet{position:fixed;inset:0;z-index:25;display:none;align-items:flex-end;background:rgba(0,0,0,.45)}
+#sheet.show{display:flex}
+#sheet .panel{background:var(--bg);width:100%;max-height:80vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px))}
+.choices{list-style:none;padding:0;margin:0 0 8px}
+.choice{width:100%;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px;margin:6px 0;font:inherit;color:inherit;word-break:break-all}
+.choice.on{border:2px solid var(--float);font-weight:700}
+#libList li{align-items:center}
+#dark{position:fixed;inset:0;z-index:15;background:#000;display:none;align-items:flex-end;justify-content:center}
+#dark.show{display:flex}
+#dark p{color:#555;font-size:13px;text-align:center;margin:0 0 calc(30px + env(safe-area-inset-bottom,0px))}
 #toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:30;max-width:90vw}
 #toast.show{opacity:1}
 @media (prefers-reduced-motion:reduce){
@@ -120,7 +130,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v10</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v11</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -134,6 +144,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
     <p class="hint rx" id="lastRx" style="text-align:center;margin:-8px 0 12px"></p>
     <button class="btn primary" id="connectBtn">センサーに接続</button>
     <div class="btns" style="justify-content:center">
+      <button class="btn small" id="darkBtn" hidden>画面を暗くする</button>
       <button class="btn small" id="disconnectBtn" hidden>すべて切断</button>
     </div>
     <ul class="sensors" id="sensorList"></ul>
@@ -141,7 +152,8 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 
   <section>
     <h2>音の設定</h2>
-    <p class="hint">曲は竿ごとに、接続後の一覧にある「曲」から選びます。選んでいない竿は内蔵アラームが鳴ります。</p>
+    <p class="hint">曲は竿ごとに、接続後の一覧にある「曲」から選びます。一度追加した曲はこの端末に保存され、次回からは一覧から選べます。選んでいない竿は内蔵アラームが鳴ります。</p>
+    <details><summary>保存されている曲</summary><ul class="log" id="libList"></ul></details>
 
     <div class="row"><label for="vol">音量</label><b id="volOut">80</b></div>
     <input type="range" id="vol" min="0" max="100" step="1" value="80">
@@ -206,6 +218,17 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
   <div class="when" id="hitWhen"></div>
   <button id="stopBtn">音を止める</button>
 </div>
+<div id="sheet" role="dialog" aria-labelledby="sheetTitle">
+  <div class="panel">
+    <h2 id="sheetTitle">曲を選ぶ</h2>
+    <ul id="sheetList" class="choices"></ul>
+    <div class="btns">
+      <span class="btn small fileBtn">iPhoneのファイルから追加<input type="file" id="sheetFile" accept="audio/*,.mp3,.m4a,.wav,.aac"></span>
+      <button class="btn small" id="sheetClose">閉じる</button>
+    </div>
+  </div>
+</div>
+<div id="dark" role="button" aria-label="画面を戻す"><p>待機中（画面を暗くしています）<br>タップで戻ります</p></div>
 <div id="toast" role="status"></div>
 
 <script>
@@ -404,22 +427,22 @@ function renderSensors(){
     const ok = s.state==='connected';
     li.innerHTML='<span class="dot '+(ok?'on':'off')+'"></span>'+
       '<span class="sname"><b></b><small></small></span>'+
-      '<button class="btn small rename">名前</button><span class="btn small fileBtn">曲<input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac"></span><button class="btn small cut">切断</button>'+
-      '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button><button class="linkbtn reset" hidden>内蔵アラームに戻す</button></span>';
+      '<button class="btn small rename">名前</button><button class="btn small pick">曲</button><button class="btn small cut">切断</button>'+
+      '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button></span>';
     li.querySelector('b').textContent=label(s);
     li.querySelector('small').textContent=rawName(s)+'　'+(STATE_TEXT[s.state]||'')+(s.state==='reconnecting'?'（'+s.tries+'回目）':'');
     li.querySelector('.cut').onclick=()=>disconnectSensor(s);
     li.querySelector('.rename').onclick=()=>renameSensor(s);
-    const own=sensorSounds[rawName(s)];
-    li.querySelector('.song span').textContent='曲：'+(own ? own.name : '内蔵アラーム');
-    const rb=li.querySelector('.reset'); rb.hidden=!own; rb.onclick=()=>resetSensorSound(s);
-    li.querySelector('.test').onclick=()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(own ? own.url : soundUrl); };
-    li.querySelector('input[type=file]').onchange=e=>setSensorSound(s,e);
+    const song=songFor(s);
+    li.querySelector('.song span').textContent='曲：'+(song ? song.name : '内蔵アラーム');
+    li.querySelector('.test').onclick=async()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(await urlFor(s)); };
+    li.querySelector('.pick').onclick=()=>openSheet(s);
     list.appendChild(li);
   });
   const n=sensors.filter(s=>s.state==='connected').length;
   $('#connectBtn').textContent = sensors.length ? 'センサーを追加' : 'センサーに接続';
   $('#disconnectBtn').hidden = sensors.length<2;
+  $('#darkBtn').hidden = !sensors.length;
   if($('#overlay').classList.contains('show')) return;
   if(!sensors.length){ setState('idle','未接続',''); return; }
   const trouble=sensors.filter(s=>s.state!=='connected').length;
@@ -427,28 +450,90 @@ function renderSensors(){
   else if(trouble) setState('reconnecting','待機中（'+n+'台）', trouble+'台の接続が切れています');
   else setState('connected','待機中（'+n+'台）', unlocked ? '' : '画面のどこかを一度タップすると音が有効になります');
 }
-/* センサーごとの曲（センサー名ごとに端末へ保存） */
-const sensorSounds = {}; // rawName -> {name,url}
-async function loadSensorSound(s){
-  const key=rawName(s); if(sensorSounds[key]) return;
-  const rec=await kvGet('sound:'+key);
-  if(rec && rec.data){ sensorSounds[key]={name:rec.name, url:URL.createObjectURL(new Blob([rec.data],{type:rec.type||'audio/mpeg'}))}; renderSensors(); }
+/* 曲ライブラリ：一度選んだ曲は端末に保存し、次回からは一覧から選べる */
+let lib=[];               // [{id,name,type,size}]
+const urlCache={};        // id -> objectURL
+let sheetTarget=null;
+function songById(id){ return lib.find(x=>x.id===id); }
+function songFor(s){ const id=S.assign&&S.assign[rawName(s)]; return id?songById(id):null; }
+async function urlForId(id){
+  if(urlCache[id]) return urlCache[id];
+  const rec=await kvGet('song:'+id); const m=songById(id);
+  if(!rec) return null;
+  return urlCache[id]=URL.createObjectURL(new Blob([rec],{type:(m&&m.type)||'audio/mpeg'}));
 }
-async function setSensorSound(s,e){
-  const f=e.target.files && e.target.files[0]; if(!f) return;
-  stopAlarm();
-  const key=rawName(s), data=await f.arrayBuffer();
-  await kvSet('sound:'+key,{name:f.name,type:f.type||'audio/mpeg',data});
-  if(sensorSounds[key]) URL.revokeObjectURL(sensorSounds[key].url);
-  sensorSounds[key]={name:f.name, url:URL.createObjectURL(new Blob([data],{type:f.type||'audio/mpeg'}))};
-  renderSensors(); toast(label(s)+'の曲を「'+f.name+'」にしました');
+async function urlFor(s){ const song=songFor(s); return (song && await urlForId(song.id)) || soundUrl; }
+async function loadLib(){
+  lib = (await kvGet('lib')) || [];
+  // 旧版（センサー名ごとに保存）の曲をライブラリへ移す
+  try{
+    const d=await openDb();
+    const keys=await new Promise(res=>{ const q=d.transaction('kv').objectStore('kv').getAllKeys(); q.onsuccess=()=>res(q.result||[]); q.onerror=()=>res([]); });
+    for(const k of keys){
+      if(typeof k!=='string' || !k.startsWith('sound:')) continue;
+      const rec=await kvGet(k);
+      if(rec && rec.data){
+        const id='s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+        await kvSet('song:'+id, rec.data);
+        lib.push({id,name:rec.name,type:rec.type,size:rec.data.byteLength});
+        S.assign=S.assign||{}; S.assign[k.slice(6)]=id;
+      }
+      await kvDel(k);
+    }
+    await kvSet('lib',lib); save();
+  }catch(e){}
+  renderLib();
 }
-async function resetSensorSound(s){
-  const key=rawName(s);
-  await kvDel('sound:'+key);
-  if(sensorSounds[key]){ URL.revokeObjectURL(sensorSounds[key].url); delete sensorSounds[key]; }
-  renderSensors(); toast(label(s)+'は内蔵アラームで鳴らします');
+async function addSong(f){
+  const data=await f.arrayBuffer();
+  const id='s'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  await kvSet('song:'+id, data);
+  const check=await kvGet('song:'+id);
+  if(!check){ toast('この端末に曲を保存できませんでした'); urlCache[id]=URL.createObjectURL(new Blob([data],{type:f.type||'audio/mpeg'})); }
+  else urlCache[id]=URL.createObjectURL(new Blob([data],{type:f.type||'audio/mpeg'}));
+  const item={id,name:f.name,type:f.type||'audio/mpeg',size:data.byteLength};
+  lib.push(item); await kvSet('lib',lib);
+  return item;
 }
+async function removeSong(id){
+  lib=lib.filter(x=>x.id!==id); await kvSet('lib',lib); await kvDel('song:'+id);
+  if(urlCache[id]){ URL.revokeObjectURL(urlCache[id]); delete urlCache[id]; }
+  if(S.assign) for(const k in S.assign) if(S.assign[k]===id) delete S.assign[k];
+  save(); renderLib(); renderSensors();
+}
+function assign(s,id){
+  S.assign=S.assign||{};
+  if(id) S.assign[rawName(s)]=id; else delete S.assign[rawName(s)];
+  save(); renderSensors();
+  const song=songById(id);
+  toast(label(s)+'の曲を「'+(song?song.name:'内蔵アラーム')+'」にしました');
+}
+function mb(n){ return (n/1048576).toFixed(1)+'MB'; }
+function renderLib(){
+  const ul=$('#libList'); if(!ul) return;
+  ul.innerHTML = lib.length ? '' : '<li>まだ曲が保存されていません</li>';
+  lib.forEach(x=>{
+    const li=document.createElement('li');
+    li.innerHTML='<span style="flex:1"></span><button class="linkbtn">削除</button>';
+    li.firstChild.textContent=x.name+'（'+mb(x.size||0)+'）';
+    li.querySelector('button').onclick=()=>{ if(confirm('「'+x.name+'」を削除しますか？')) removeSong(x.id); };
+    ul.appendChild(li);
+  });
+}
+function openSheet(s){
+  sheetTarget=s;
+  $('#sheetTitle').textContent=label(s)+'の曲を選ぶ';
+  const cur=songFor(s), ul=$('#sheetList'); ul.innerHTML='';
+  const items=[{id:null,name:'内蔵アラーム'}, ...lib];
+  items.forEach(x=>{
+    const li=document.createElement('li'); const btn=document.createElement('button');
+    btn.className='choice'+(((cur&&cur.id)===x.id)||(!cur&&!x.id)?' on':'');
+    btn.textContent=x.name; btn.onclick=()=>{ assign(s,x.id); closeSheet(); };
+    li.appendChild(btn); ul.appendChild(li);
+  });
+  $('#sheet').classList.add('show');
+}
+function closeSheet(){ $('#sheet').classList.remove('show'); sheetTarget=null; }
 function renameSensor(s){
   let v=null;
   try{ v=prompt('この竿の名前（例：右の竿）', label(s)); }catch(e){}
@@ -488,7 +573,7 @@ async function connect(){
              ifishCount:null, idleSet:new Set(), lastHit:0, state:'connecting'};
   s.handler = ev=>onValue(s,ev);
   device.addEventListener('gattserverdisconnected', ()=>onDisconnected(s));
-  sensors.push(s); renderSensors(); loadSensorSound(s);
+  sensors.push(s); renderSensors(); const sg=songFor(s); if(sg) urlForId(sg.id);
   await openGatt(s);
 }
 
@@ -567,10 +652,10 @@ function hit(s){
   $('#hitLog').prepend(li);
   $('#hitWho').textContent=label(s);
   $('#hitWhen').textContent=hhmmss();
+  $('#dark').classList.remove('show');
   $('#overlay').classList.add('show');
   setState('hit','ヒット！',label(s)+'　'+hhmmss());
-  const own = sensorSounds[rawName(s)];
-  playAlarm(own ? own.url : soundUrl);
+  urlFor(s).then(u=>playAlarm(u));
 }
 
 function addRx(src,hex){
@@ -609,10 +694,21 @@ function disconnectSensor(s){
 function disconnect(){ [...sensors].forEach(disconnectSensor); }
 
 /* ---------- screen wake ---------- */
+let wakeVideo=null;
 async function requestWake(){
-  try{ if('wakeLock' in navigator){ wake = await navigator.wakeLock.request('screen'); } }catch(e){}
+  try{ if('wakeLock' in navigator){ wake = await navigator.wakeLock.request('screen'); return; } }catch(e){}
+  // Wake Lockが使えない環境では、無音の小さな動画を再生し続けて画面の自動ロックを防ぐ
+  try{
+    if(!wakeVideo){
+      wakeVideo=document.createElement('video');
+      wakeVideo.setAttribute('playsinline',''); wakeVideo.muted=true; wakeVideo.loop=true;
+      wakeVideo.style.cssText='position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;bottom:0;left:0';
+      wakeVideo.src='data:video/mp4;base64,AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMrbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAB9AAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAlV0cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAB9AAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAAfQAAAAAAABAAAAAAHNbWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAABAAAAAgABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABeG1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAAThzdGJsAAAAuHN0c2QAAAAAAAAAAQAAAKhhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2MC4zMS4xMDIgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAALmF2Y0MBQsAK/+EAFmdCwArZHsBEAAADAAQAAAMACDxImSABAAVoy4PLIAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAApAAAAKQAAAABhzdHRzAAAAAAAAAAEAAAACAABAAAAAABRzdHNzAAAAAAAAAAEAAAABAAAAHHN0c2MAAAAAAAAAAQAAAAEAAAACAAAAAQAAABxzdHN6AAAAAAAAAAAAAAACAAAChgAAAAoAAAAUc3RjbwAAAAAAAAABAAADWwAAAGJ1ZHRhAAAAWm1ldGEAAAAAAAAAIWhkbHIAAAAAAAAAAG1kaXJhcHBsAAAAAAAAAAAAAAAALWlsc3QAAAAlqXRvbwAAAB1kYXRhAAAAAQAAAABMYXZmNjAuMTYuMTAwAAAACGZyZWUAAAKYbWRhdAAAAnAGBf//bNxF6b3m2Ui3lizYINkj7u94MjY0IC0gY29yZSAxNjQgcjMxMDggMzFlMTlmOSAtIEguMjY0L01QRUctNCBBVkMgY29kZWMgLSBDb3B5bGVmdCAyMDAzLTIwMjMgLSBodHRwOi8vd3d3LnZpZGVvbGFuLm9yZy94MjY0Lmh0bWwgLSBvcHRpb25zOiBjYWJhYz0wIHJlZj0zIGRlYmxvY2s9MTowOjAgYW5hbHlzZT0weDE6MHgxMTEgbWU9aGV4IHN1Ym1lPTcgcHN5PTEgcHN5X3JkPTEuMDA6MC4wMCBtaXhlZF9yZWY9MSBtZV9yYW5nZT0xNiBjaHJvbWFfbWU9MSB0cmVsbGlzPTEgOHg4ZGN0PTAgY3FtPTAgZGVhZHpvbmU9MjEsMTEgZmFzdF9wc2tpcD0xIGNocm9tYV9xcF9vZmZzZXQ9LTIgdGhyZWFkcz0xIGxvb2thaGVhZF90aHJlYWRzPTEgc2xpY2VkX3RocmVhZHM9MCBucj0wIGRlY2ltYXRlPTEgaW50ZXJsYWNlZD0wIGJsdXJheV9jb21wYXQ9MCBjb25zdHJhaW5lZF9pbnRyYT0wIGJmcmFtZXM9MCB3ZWlnaHRwPTAga2V5aW50PTI1MCBrZXlpbnRfbWluPTEgc2NlbmVjdXQ9NDAgaW50cmFfcmVmcmVzaD0wIHJjX2xvb2thaGVhZD00MCByYz1jcmYgbWJ0cmVlPTEgY3JmPTIzLjAgcWNvbXA9MC42MCBxcG1pbj0wIHFwbWF4PTY5IHFwc3RlcD00IGlwX3JhdGlvPTEuNDAgYXE9MToxLjAwAIAAAAAOZYiEBb///w9FAAFPf4AAAAAGQZo4CvqA'; document.body.appendChild(wakeVideo);
+    }
+    await wakeVideo.play();
+  }catch(e){}
 }
-function releaseWake(){ try{ wake && wake.release(); }catch(e){} wake=null; }
+function releaseWake(){ try{ wake && wake.release(); }catch(e){} wake=null; try{ wakeVideo && wakeVideo.pause(); }catch(e){} }
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible' && anyConnected()) requestWake();
 });
@@ -630,6 +726,15 @@ function num(el,min,max,def){ let v=parseInt(el.value,10); if(isNaN(v)) v=def; r
 $('#connectBtn').addEventListener('click', connect);
 document.addEventListener('click', e=>{ if(!unlocked && !e.target.closest('#connectBtn')) unlockAudio(); }, true);
 $('#disconnectBtn').addEventListener('click', disconnect);
+$('#sheetClose').addEventListener('click', closeSheet);
+$('#sheet').addEventListener('click', e=>{ if(e.target.id==='sheet') closeSheet(); });
+$('#sheetFile').addEventListener('change', async e=>{
+  const f=e.target.files && e.target.files[0]; e.target.value=''; if(!f || !sheetTarget) return;
+  const s=sheetTarget; stopAlarm();
+  const item=await addSong(f); renderLib(); assign(s,item.id); closeSheet();
+});
+$('#darkBtn').addEventListener('click', ()=>{ requestWake(); $('#dark').classList.add('show'); });
+$('#dark').addEventListener('click', ()=>$('#dark').classList.remove('show'));
 $('#stopBtn').addEventListener('click', stopAlarm);
 $('#overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') stopAlarm(); });
 $('#vol').addEventListener('input', e=>{ S.volume=+e.target.value; $('#volOut').textContent=S.volume; applyVolume(); });
@@ -659,6 +764,8 @@ $('#clearLog').addEventListener('click', ()=>{ $('#hitLog').innerHTML=''; $('#rx
   if(!S.ver || S.ver<8){ S.duration=0; S.prefix='iFish'; S.ver=8; save(); }
   fillForm();
   await loadSound();
+  await loadLib();
+  try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
   setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください');
   $('#sub').textContent='センサーの電源を入れて「センサーに接続」を押してください。2台目以降は「センサーを追加」で増やせます';
 })();
