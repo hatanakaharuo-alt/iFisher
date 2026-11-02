@@ -102,7 +102,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>ヒットコール <small style="font-weight:400">v3</small></h1>
+  <h1>ヒットコール <small style="font-weight:400">v4</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -365,6 +365,16 @@ function parseUuids(str){
     return h;
   });
 }
+function fullUuid(u){
+  if(typeof u==='number') return '0000'+u.toString(16).padStart(4,'0')+'-0000-1000-8000-00805f9b34fb';
+  return String(u).toLowerCase();
+}
+function errText(e){
+  if(!e) return '不明';
+  let t=[e.name,e.code,e.message].filter(x=>x!==undefined&&x!=='').join(' / ');
+  if(!t){ try{ t=JSON.stringify(e); }catch(_){ t=String(e); } }
+  return t;
+}
 function shortUuid(u){ const m=/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(u); return m?m[1]:u; }
 function toHex(dv){ const a=[]; for(let i=0;i<dv.byteLength;i++) a.push(dv.getUint8(i).toString(16).padStart(2,'0')); return a.join(' '); }
 function norm(h){ return (h||'').toLowerCase().replace(/[^0-9a-f]/g,''); }
@@ -376,11 +386,10 @@ async function connect(){
     setState('idle','接続できません','このブラウザはBluetoothに対応していません。Bluefyで開いてください');
     return;
   }
-  // 機器選択はタップ直後に呼ぶ必要があるため、音の準備は待たずに並行して行う
-  unlockAudio();
-  const optionalServices = [...COMMON_SERVICES, ...parseUuids(S.uuids)];
+  // Bluefyは一部の書き方に対応しないため、UUIDはすべて正式な文字列表記にし、条件も最小限にする
+  const optionalServices = [...new Set([...COMMON_SERVICES, ...parseUuids(S.uuids)].map(fullUuid))];
   const opts = S.prefix
-    ? {filters:[{namePrefix:S.prefix},{services:[0xfff0]}], optionalServices}
+    ? {filters:[{namePrefix:S.prefix}], optionalServices}
     : {acceptAllDevices:true, optionalServices};
   setState('idle','センサーを探しています…','一覧からセンサーを選んでください');
   try{
@@ -388,7 +397,7 @@ async function connect(){
   }catch(e){
     const msg = (e && e.name==='NotFoundError')
       ? 'センサーが選ばれませんでした（'+(e.message||'キャンセル')+'）'
-      : 'センサーを選べませんでした：'+((e&&e.name)||'')+' '+((e&&e.message)||e);
+      : 'センサーを選べませんでした：'+errText(e);
     setState('idle','未接続',msg); return;
   }
   device.addEventListener('gattserverdisconnected', onDisconnected);
@@ -420,7 +429,7 @@ async function openGatt(){
     if(subs===0){
       setState('connected','接続済み（受信先なし）','通知できる特性が見つかりません。「接続できないとき」を開いてください');
     }else{
-      setState('connected','待機中',deviceName());
+      setState('connected','待機中', unlocked ? deviceName() : deviceName()+'　※画面のどこかを一度タップすると音が有効になります');
     }
     requestWake();
   }catch(e){
@@ -510,6 +519,7 @@ function fillForm(){
 function num(el,min,max,def){ let v=parseInt(el.value,10); if(isNaN(v)) v=def; return Math.max(min,Math.min(max,v)); }
 
 $('#connectBtn').addEventListener('click', connect);
+document.addEventListener('click', e=>{ if(!unlocked && !e.target.closest('#connectBtn')) unlockAudio(); }, true);
 $('#disconnectBtn').addEventListener('click', disconnect);
 $('#stopBtn').addEventListener('click', stopAlarm);
 $('#overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') stopAlarm(); });
