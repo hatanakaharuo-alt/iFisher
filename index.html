@@ -102,7 +102,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>ヒットコール</h1>
+  <h1>ヒットコール <small style="font-weight:400">v2</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -239,7 +239,7 @@ async function kvDel(k){
   }catch(e){}
 }
 
-const DEFAULTS = {volume:80, loop:true, duration:30, mode:'any', pattern:'', cooldown:3, warn:true, prefix:'', uuids:''};
+const DEFAULTS = {volume:80, loop:true, duration:30, mode:'any', pattern:'', cooldown:3, warn:true, prefix:'iFish', uuids:''};
 let S = {...DEFAULTS};
 function save(){ kvSet('settings', S); }
 
@@ -370,17 +370,25 @@ function norm(h){ return (h||'').toLowerCase().replace(/[^0-9a-f]/g,''); }
 function deviceName(){ return device ? (device.name||'名前のないセンサー') : ''; }
 
 async function connect(){
-  await unlockAudio();
-  if(!navigator.bluetooth){ $('#noBle').hidden=false; toast('Bluefyで開いてください'); return; }
+  if(!navigator.bluetooth){
+    $('#noBle').hidden=false;
+    setState('idle','接続できません','このブラウザはBluetoothに対応していません。Bluefyで開いてください');
+    return;
+  }
+  // 機器選択はタップ直後に呼ぶ必要があるため、音の準備は待たずに並行して行う
+  unlockAudio();
   const optionalServices = [...COMMON_SERVICES, ...parseUuids(S.uuids)];
   const opts = S.prefix
-    ? {filters:[{namePrefix:S.prefix}], optionalServices}
+    ? {filters:[{namePrefix:S.prefix},{services:[0xfff0]}], optionalServices}
     : {acceptAllDevices:true, optionalServices};
+  setState('idle','センサーを探しています…','一覧からセンサーを選んでください');
   try{
     device = await navigator.bluetooth.requestDevice(opts);
   }catch(e){
-    if(e && e.name==='NotFoundError') return; // 選択キャンセル
-    setState('idle','未接続','センサーを選べませんでした：'+(e.message||e)); return;
+    const msg = (e && e.name==='NotFoundError')
+      ? 'センサーが選ばれませんでした（'+(e.message||'キャンセル')+'）'
+      : 'センサーを選べませんでした：'+((e&&e.name)||'')+' '+((e&&e.message)||e);
+    setState('idle','未接続',msg); return;
   }
   device.addEventListener('gattserverdisconnected', onDisconnected);
   manual=false; tries=0;
