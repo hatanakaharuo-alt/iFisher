@@ -102,7 +102,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>ヒットコール <small style="font-weight:400">v4</small></h1>
+  <h1>ヒットコール <small style="font-weight:400">v5</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -157,7 +157,8 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
     <div class="row">
       <label for="mode">鳴らす条件</label>
       <select id="mode">
-        <option value="change">待機中と違うデータが届いたら（おすすめ）</option>
+        <option value="ifish">iFishセンサー専用（おすすめ）</option>
+        <option value="change">待機中と違うデータが届いたら</option>
         <option value="any">センサーから何か届いたら</option>
         <option value="match">特定のデータが届いたら</option>
       </select>
@@ -241,7 +242,7 @@ async function kvDel(k){
   }catch(e){}
 }
 
-const DEFAULTS = {volume:80, loop:true, duration:30, mode:'change', pattern:'', cooldown:3, warn:true, prefix:'iFish', uuids:''};
+const DEFAULTS = {volume:80, loop:true, duration:30, mode:'ifish', pattern:'', cooldown:3, warn:true, prefix:'iFish', uuids:''};
 let S = {...DEFAULTS};
 function save(){ kvSet('settings', S); }
 
@@ -356,7 +357,7 @@ const COMMON_SERVICES = [
   '0000fe59-0000-1000-8000-00805f9b34fb'
 ];
 let device=null, server=null, connectedAt=0, manual=false, tries=0, retryT=null;
-let idleSet=new Set(), learning=false, lastHit=0, hitCount=0, wake=null;
+let ifishCount=null, idleSet=new Set(), learning=false, lastHit=0, hitCount=0, wake=null;
 
 function parseUuids(str){
   return (str||'').split(/[,\s]+/).map(s=>s.trim().toLowerCase()).filter(Boolean).map(s=>{
@@ -444,11 +445,24 @@ function onValue(ev){
   const key = shortUuid(c.uuid)+':'+norm(hex);
   $('#lastRx').textContent = '最新の受信 '+hhmmss()+'　'+shortUuid(c.uuid)+'：'+hex;
   // 接続後5秒間に届いたデータは「待機中のデータ」として覚え、ヒット判定しない
-  if(Date.now()-connectedAt < 5000){ idleSet.add(key); return; }
+  if(Date.now()-connectedAt < 5000){
+    idleSet.add(key);
+    if(shortUuid(c.uuid)==='fff1' && c.value.byteLength>=2) ifishCount=c.value.getUint8(1);
+    return;
+  }
   if(learning){
     learning=false; S.pattern=hex; S.mode='match'; save(); fillForm();
     $('#learnBtn').textContent='次の信号を覚える';
     toast('ヒット信号を登録しました：'+hex); return;
+  }
+  if(S.mode==='ifish'){
+    // iFish: 特性FFF1に「01 [ヒット回数] 01」が届く。2バイト目が変わったときだけヒット（同じ通知の重複は無視）
+    const v=c.value;
+    if(shortUuid(c.uuid)!=='fff1' || v.byteLength<2) return;
+    const n=v.getUint8(1);
+    if(n===ifishCount) return;
+    ifishCount=n;
+    hit(); return;
   }
   if(S.mode==='change' && idleSet.has(key)) return;
   if(S.mode==='match'){
@@ -559,7 +573,7 @@ $('#clearLog').addEventListener('click', ()=>{ $('#hitLog').innerHTML=''; $('#rx
   if(!navigator.bluetooth) $('#noBle').hidden=false;
   const saved = await kvGet('settings');
   if(saved) S = {...DEFAULTS, ...saved};
-  if(!S.ver || S.ver<3){ S.mode='change'; S.pattern=''; S.ver=3; save(); }
+  if(!S.ver || S.ver<5){ S.mode='ifish'; S.pattern=''; S.ver=5; save(); }
   fillForm();
   await loadSound();
   setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください');
