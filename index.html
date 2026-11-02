@@ -102,7 +102,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>ヒットコール <small style="font-weight:400">v5</small></h1>
+  <h1>ヒットコール <small style="font-weight:400">v6</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -376,7 +376,14 @@ function errText(e){
   if(!t){ try{ t=JSON.stringify(e); }catch(_){ t=String(e); } }
   return t;
 }
-function shortUuid(u){ const m=/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(u); return m?m[1]:u; }
+function shortUuid(u){
+  // Bluefyは「FFF1」のような大文字・短縮形で返すことがあるため、小文字の4桁表記にそろえる
+  u=String(u||'').toLowerCase().replace(/^0x/,'');
+  const m=/^0000([0-9a-f]{4})-0000-1000-8000-00805f9b34fb$/.exec(u);
+  if(m) return m[1];
+  if(/^0000[0-9a-f]{4}$/.test(u)) return u.slice(4);
+  return u;
+}
 function toHex(dv){ const a=[]; for(let i=0;i<dv.byteLength;i++) a.push(dv.getUint8(i).toString(16).padStart(2,'0')); return a.join(' '); }
 function norm(h){ return (h||'').toLowerCase().replace(/[^0-9a-f]/g,''); }
 function deviceName(){ return device ? (device.name||'名前のないセンサー') : ''; }
