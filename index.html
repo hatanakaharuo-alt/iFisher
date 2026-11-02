@@ -120,7 +120,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v9</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v10</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -140,19 +140,8 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
   </div>
 
   <section>
-    <h2>ヒット時の音（共通）</h2>
-    <div class="row">
-      <div>
-        <div class="hint" style="margin:0">再生する音</div>
-        <div class="soundname" id="soundName">内蔵アラーム</div>
-      </div>
-    </div>
-    <div class="btns">
-      <span class="btn small fileBtn">音楽を選ぶ<input type="file" id="fileIn" accept="audio/*,.mp3,.m4a,.wav,.aac"></span>
-      <button class="btn small" id="resetSound">内蔵アラームに戻す</button>
-      <button class="btn small" id="testBtn">試しに鳴らす</button>
-    </div>
-    <p class="hint">iPhoneの「ファイル」アプリにある音楽ファイル（mp3・m4a・wav）を選べます。選んだ音はこの端末に保存されます。竿ごとに違う曲にしたいときは、接続後に一覧の「曲」から選んでください。</p>
+    <h2>音の設定</h2>
+    <p class="hint">曲は竿ごとに、接続後の一覧にある「曲」から選びます。選んでいない竿は内蔵アラームが鳴ります。</p>
 
     <div class="row"><label for="vol">音量</label><b id="volOut">80</b></div>
     <input type="range" id="vol" min="0" max="100" step="1" value="80">
@@ -329,14 +318,13 @@ async function playAlarm(url){
   if(url && audioEl.src!==url){ audioEl.src = url; }
   audioEl.loop = S.loop;
   try{ audioEl.currentTime = 0; }catch(e){}
-  try{ await audioEl.play(); $('#testBtn').textContent='止める'; }
+  try{ await audioEl.play(); }
   catch(e){ toast('音を再生できません。画面を一度タップしてください'); }
   if(S.duration>0) stopT = setTimeout(stopAlarm, S.duration*1000);
 }
 function stopAlarm(){
   clearTimeout(stopT);
   if(audioEl){ audioEl.pause(); try{audioEl.currentTime=0;}catch(e){} }
-  $('#testBtn').textContent='試しに鳴らす';
   $('#overlay').classList.remove('show');
   renderSensors();
 }
@@ -352,14 +340,13 @@ function warnBeep(){
   }
 }
 async function loadSound(){
-  const rec = await kvGet('sound');
+  const rec = null; // 共通の曲は廃止。曲を選んでいない竿は内蔵アラーム
   let blob, name;
   if(rec && rec.data){ blob=new Blob([rec.data],{type:rec.type||'audio/mpeg'}); name=rec.name; }
   else { blob=makeBeepWav(); name='内蔵アラーム'; }
   if(soundUrl) URL.revokeObjectURL(soundUrl);
   soundUrl = URL.createObjectURL(blob);
   if(audioEl){ audioEl.src = soundUrl; audioEl.load(); }
-  $('#soundName').textContent = name;
 }
 
 /* ---------- Bluetooth ---------- */
@@ -418,14 +405,15 @@ function renderSensors(){
     li.innerHTML='<span class="dot '+(ok?'on':'off')+'"></span>'+
       '<span class="sname"><b></b><small></small></span>'+
       '<button class="btn small rename">名前</button><span class="btn small fileBtn">曲<input type="file" accept="audio/*,.mp3,.m4a,.wav,.aac"></span><button class="btn small cut">切断</button>'+
-      '<span class="song"><span></span><button class="linkbtn reset" hidden>共通の音に戻す</button></span>';
+      '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button><button class="linkbtn reset" hidden>内蔵アラームに戻す</button></span>';
     li.querySelector('b').textContent=label(s);
     li.querySelector('small').textContent=rawName(s)+'　'+(STATE_TEXT[s.state]||'')+(s.state==='reconnecting'?'（'+s.tries+'回目）':'');
     li.querySelector('.cut').onclick=()=>disconnectSensor(s);
     li.querySelector('.rename').onclick=()=>renameSensor(s);
     const own=sensorSounds[rawName(s)];
-    li.querySelector('.song span').textContent='曲：'+(own ? own.name : '共通の音（'+$('#soundName').textContent+'）');
+    li.querySelector('.song span').textContent='曲：'+(own ? own.name : '内蔵アラーム');
     const rb=li.querySelector('.reset'); rb.hidden=!own; rb.onclick=()=>resetSensorSound(s);
+    li.querySelector('.test').onclick=()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(own ? own.url : soundUrl); };
     li.querySelector('input[type=file]').onchange=e=>setSensorSound(s,e);
     list.appendChild(li);
   });
@@ -459,7 +447,7 @@ async function resetSensorSound(s){
   const key=rawName(s);
   await kvDel('sound:'+key);
   if(sensorSounds[key]){ URL.revokeObjectURL(sensorSounds[key].url); delete sensorSounds[key]; }
-  renderSensors(); toast(label(s)+'は共通の音で鳴らします');
+  renderSensors(); toast(label(s)+'は内蔵アラームで鳴らします');
 }
 function renameSensor(s){
   let v=null;
@@ -644,19 +632,6 @@ document.addEventListener('click', e=>{ if(!unlocked && !e.target.closest('#conn
 $('#disconnectBtn').addEventListener('click', disconnect);
 $('#stopBtn').addEventListener('click', stopAlarm);
 $('#overlay').addEventListener('click', e=>{ if(e.target.id==='overlay') stopAlarm(); });
-$('#testBtn').addEventListener('click', async ()=>{
-  await unlockAudio();
-  if(audioEl && !audioEl.paused){ stopAlarm(); } else { playAlarm(soundUrl); }
-});
-$('#fileIn').addEventListener('change', async e=>{
-  const f=e.target.files && e.target.files[0]; if(!f) return;
-  stopAlarm();
-  const data=await f.arrayBuffer();
-  await kvSet('sound',{name:f.name,type:f.type||'audio/mpeg',data});
-  await loadSound(); toast('「'+f.name+'」を設定しました');
-  e.target.value='';
-});
-$('#resetSound').addEventListener('click', async ()=>{ stopAlarm(); await kvDel('sound'); await loadSound(); toast('内蔵アラームに戻しました'); });
 $('#vol').addEventListener('input', e=>{ S.volume=+e.target.value; $('#volOut').textContent=S.volume; applyVolume(); });
 $('#vol').addEventListener('change', save);
 $('#loop').addEventListener('change', e=>{ S.loop=e.target.checked; if(audioEl) audioEl.loop=S.loop; save(); });
