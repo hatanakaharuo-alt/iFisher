@@ -146,7 +146,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v12</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v13</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -692,7 +692,7 @@ function onDisconnected(s){
 function scheduleRetry(s){
   clearTimeout(s.retryT);
   if(s.manual) return;
-  if(s.tries>=12){ s.state='disconnected'; renderSensors(); toast(label(s)+'：電源と距離を確認して、もう一度接続してください'); return; }
+  if(s.tries>=12){ s.state='disconnected'; renderSensors(); toast(label(s)+'：電源と距離を確認してください。30秒ごとに再接続を続けます'); s.retryT=setTimeout(()=>{ if(!s.manual) openGatt(s); },30000); return; }
   const wait=Math.min(2000*Math.pow(1.6,s.tries),30000); s.tries++;
   s.state='reconnecting'; renderSensors();
   s.retryT=setTimeout(()=>{ if(!s.manual) openGatt(s); }, wait);
@@ -725,8 +725,17 @@ async function requestWake(){
   }catch(e){}
 }
 function releaseWake(){ try{ wake && wake.release(); }catch(e){} wake=null; try{ wakeVideo && wakeVideo.pause(); }catch(e){} }
+// 画面に戻ったら、切れているセンサーをすぐに再接続する（iOSはバックグラウンドでページを止めるため）
+let hiddenAt=0;
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible' && anyConnected()) requestWake();
+  if(document.visibilityState==='hidden'){ hiddenAt=Date.now(); return; }
+  const lost=sensors.filter(s=>!s.virtual && s.state!=='connected' && s.state!=='connecting');
+  if(lost.length){
+    toast('バックグラウンド中に接続が切れたため、再接続しています');
+    if(S.warn) warnBeep();
+    lost.forEach(s=>{ clearTimeout(s.retryT); s.manual=false; s.tries=0; openGatt(s); });
+  }
+  if(sensors.length) requestWake();
 });
 
 /* ---------- form ---------- */
