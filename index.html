@@ -109,7 +109,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 .sensor .sname{flex:1;display:flex;flex-direction:column;line-height:1.3}
 .sensor small{color:var(--muted);font-size:12px}
 .dot{width:12px;height:12px;border-radius:50%;flex:none}
-.dot.on{background:var(--ok)} .dot.off{background:var(--danger)}
+.dot.on{background:var(--ok)} .dot.idle{background:var(--line)} .dot.off{background:var(--danger)}
 #sheet{position:fixed;inset:0;z-index:25;display:none;align-items:flex-end;background:rgba(0,0,0,.45)}
 #sheet.show{display:flex}
 #sheet .panel{background:var(--bg);width:100%;max-height:80vh;overflow:auto;border-radius:18px 18px 0 0;padding:18px 16px calc(18px + env(safe-area-inset-bottom,0px))}
@@ -146,7 +146,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v13</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v14</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -426,9 +426,23 @@ function shortUuid(u){
 function toHex(dv){ const a=[]; for(let i=0;i<dv.byteLength;i++) a.push(dv.getUint8(i).toString(16).padStart(2,'0')); return a.join(' '); }
 function norm(h){ return (h||'').toLowerCase().replace(/[^0-9a-f]/g,''); }
 function rawName(s){ return s.device.name || '名前のないセンサー'; }
+function knownNo(name){
+  S.known = S.known || [];
+  let i=S.known.indexOf(name);
+  if(i<0 && name && name!=='名前のないセンサー'){ S.known.push(name); save(); i=S.known.length-1; }
+  return i+1;
+}
 function label(s){
   const nick = S.names && S.names[rawName(s)];
-  return nick || ('竿'+s.no);
+  const no = s.no || knownNo(rawName(s));
+  return nick || ('竿'+no);
+}
+function forgetSensor(name){
+  if(!confirm('「'+((S.names&&S.names[name])||name)+'」を一覧から削除しますか？（曲の割り当ても解除されます）')) return;
+  S.known=(S.known||[]).filter(x=>x!==name);
+  if(S.assign) delete S.assign[name];
+  if(S.names) delete S.names[name];
+  save(); renderSensors();
 }
 function anyConnected(){ return sensors.some(s=>s.server && s.server.connected); }
 
@@ -455,12 +469,32 @@ function renderSensors(){
     li.querySelector('.pick').onclick=()=>openSheet(s);
     list.appendChild(li);
   });
+  // 以前に接続したセンサー（未接続）も表示し、名前や曲を設定できるようにする
+  const live=new Set(sensors.map(x=>rawName(x)));
+  (S.known||[]).filter(name=>!live.has(name)).forEach(name=>{
+    const s={placeholder:true, device:{name}, no:S.known.indexOf(name)+1};
+    const li=document.createElement('li');
+    li.className='sensor';
+    li.innerHTML='<span class="dot idle"></span>'+
+      '<span class="sname"><b></b><small></small></span>'+
+      '<button class="btn small rename">名前</button><button class="btn small pick">曲</button><button class="btn small forget">削除</button>'+
+      '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button></span>';
+    li.querySelector('b').textContent=label(s);
+    li.querySelector('small').textContent=name+'　未接続';
+    li.querySelector('.rename').onclick=()=>renameSensor(s);
+    li.querySelector('.forget').onclick=()=>forgetSensor(name);
+    const song=songFor(s);
+    li.querySelector('.song span').textContent='曲：'+(song ? song.name : '内蔵アラーム');
+    li.querySelector('.test').onclick=async()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(await urlFor(s)); };
+    li.querySelector('.pick').onclick=()=>openSheet(s);
+    list.appendChild(li);
+  });
   const n=sensors.filter(s=>s.state==='connected').length;
   $('#connectBtn').textContent = sensors.length ? 'センサーを追加' : 'センサーに接続';
   $('#disconnectBtn').hidden = sensors.length<2;
   $('#darkBtn').hidden = !sensors.length;
   if($('#overlay').classList.contains('show')) return;
-  if(!sensors.length){ setState('idle','未接続',''); return; }
+  if(!sensors.length){ setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください'); return; }
   const trouble=sensors.filter(s=>s.state!=='connected').length;
   if(n===0) setState('disconnected','接続が切れました', trouble+'台が再接続待ちです');
   else if(trouble) setState('reconnecting','待機中（'+n+'台）', trouble+'台の接続が切れています');
@@ -585,7 +619,7 @@ async function connect(){
     if(dup.state==='connected'){ toast(label(dup)+'はすでに接続しています'); return; }
     dup.manual=false; dup.tries=0; return openGatt(dup);
   }
-  const s = {id:++sensorSeq, no:sensors.length+1, device, server:null, connectedAt:0, manual:false, tries:0, retryT:null,
+  const s = {id:++sensorSeq, no:0, device, server:null, connectedAt:0, manual:false, tries:0, retryT:null,
              ifishCount:null, idleSet:new Set(), lastHit:0, state:'connecting'};
   s.handler = ev=>onValue(s,ev);
   device.addEventListener('gattserverdisconnected', ()=>onDisconnected(s));
@@ -701,7 +735,6 @@ function disconnectSensor(s){
   s.manual=true; clearTimeout(s.retryT);
   try{ if(s.device.gatt.connected) s.device.gatt.disconnect(); }catch(e){}
   const i=sensors.indexOf(s); if(i>=0) sensors.splice(i,1);
-  sensors.forEach((x,k)=>x.no=k+1);
   s.disc=null;
   $('#discList').innerHTML = sensors.filter(x=>x.disc).map(x=>x.disc.map(t=>'<li>'+t+'</li>').join('')).join('') || '<li>未接続</li>';
   renderSensors();
@@ -792,6 +825,7 @@ $('#clearLog').addEventListener('click', ()=>{ $('#hitLog').innerHTML=''; $('#rx
   await loadLib();
   try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
   setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください');
+  renderSensors();
   $('#sub').textContent='センサーの電源を入れて「センサーに接続」を押してください。2台目以降は「センサーを追加」で増やせます';
 })();
 })();
