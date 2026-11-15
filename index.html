@@ -147,7 +147,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v16</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v17</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -469,22 +469,45 @@ function shortUuid(u){
 function toHex(dv){ const a=[]; for(let i=0;i<dv.byteLength;i++) a.push(dv.getUint8(i).toString(16).padStart(2,'0')); return a.join(' '); }
 function norm(h){ return (h||'').toLowerCase().replace(/[^0-9a-f]/g,''); }
 function rawName(s){ return s.device.name || '名前のないセンサー'; }
-function knownNo(name){
+// センサーの識別：同じ名前のセンサー（iTAGなど）を区別するため、端末ごとのIDで記憶する
+function skey(s){ if(s.key) return s.key; const d=s.device; return d.id ? 'id:'+d.id : rawName(s); }
+function shortId(k){ return String(k).startsWith('id:') ? String(k).replace(/[^0-9a-zA-Z]/g,'').slice(-4).toUpperCase() : ''; }
+function nameOf(k){ return (S.kname&&S.kname[k]) || k; }
+function dispName(k){
+  const n=nameOf(k), same=(S.known||[]).filter(x=>nameOf(x)===n).length;
+  return (same>1 && shortId(k)) ? n+'・'+shortId(k) : n;
+}
+function migrateKey(s){
+  const k=skey(s), n=rawName(s);
+  S.known=S.known||[]; S.kname=S.kname||{};
+  if(k===n) return;
+  S.kname[k]=n;
+  if(!S.known.includes(k)){
+    // 旧版は名前で記憶していたので、同じ名前の記録を最初に接続したセンサーへ引き継ぐ
+    const i=S.known.indexOf(n);
+    const move=o=>{ if(o && Object.prototype.hasOwnProperty.call(o,n)){ o[k]=o[n]; delete o[n]; } };
+    if(i>=0){ S.known[i]=k; move(S.names); move(S.assign); }
+    else S.known.push(k);
+  }
+  save();
+}
+function knownNo(k){
   S.known = S.known || [];
-  let i=S.known.indexOf(name);
-  if(i<0 && name && name!=='名前のないセンサー'){ S.known.push(name); save(); i=S.known.length-1; }
+  let i=S.known.indexOf(k);
+  if(i<0 && k && k!=='名前のないセンサー'){ S.known.push(k); save(); i=S.known.length-1; }
   return i+1;
 }
 function label(s){
-  const nick = S.names && S.names[rawName(s)];
-  const no = s.no || knownNo(rawName(s));
+  const nick = S.names && S.names[skey(s)];
+  const no = s.no || knownNo(skey(s));
   return nick || ('竿'+no);
 }
 function forgetSensor(name){
-  if(!confirm('「'+((S.names&&S.names[name])||name)+'」を一覧から削除しますか？（曲の割り当ても解除されます）')) return;
+  if(!confirm('「'+((S.names&&S.names[name])||dispName(name))+'」を一覧から削除しますか？（曲の割り当ても解除されます）')) return;
   S.known=(S.known||[]).filter(x=>x!==name);
   if(S.assign) delete S.assign[name];
   if(S.names) delete S.names[name];
+  if(S.kname) delete S.kname[name];
   save(); renderSensors();
 }
 function anyConnected(){ return sensors.some(s=>s.server && s.server.connected); }
@@ -503,7 +526,7 @@ function renderSensors(){
       '<button class="btn small rename">名前</button><button class="btn small pick">曲</button><button class="btn small cut">切断</button>'+
       '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button></span>';
     li.querySelector('b').textContent=label(s);
-    li.querySelector('small').textContent=rawName(s)+'　'+(STATE_TEXT[s.state]||'')+(s.state==='reconnecting'?'（'+s.tries+'回目）':'');
+    li.querySelector('small').textContent=dispName(skey(s))+'　'+(STATE_TEXT[s.state]||'')+(s.state==='reconnecting'?'（'+s.tries+'回目）':'');
     li.querySelector('.cut').onclick=()=>disconnectSensor(s);
     li.querySelector('.rename').onclick=()=>renameSensor(s);
     const song=songFor(s);
@@ -513,9 +536,9 @@ function renderSensors(){
     list.appendChild(li);
   });
   // 以前に接続したセンサー（未接続）も表示し、名前や曲を設定できるようにする
-  const live=new Set(sensors.map(x=>rawName(x)));
+  const live=new Set(sensors.map(x=>skey(x)));
   (S.known||[]).filter(name=>!live.has(name)).forEach(name=>{
-    const s={placeholder:true, device:{name}, no:S.known.indexOf(name)+1};
+    const s={placeholder:true, key:name, device:{name:nameOf(name)}, no:S.known.indexOf(name)+1};
     const li=document.createElement('li');
     li.className='sensor';
     li.innerHTML='<span class="dot idle"></span>'+
@@ -523,7 +546,7 @@ function renderSensors(){
       '<button class="btn small rename">名前</button><button class="btn small pick">曲</button><button class="btn small forget">削除</button>'+
       '<span class="song"><span></span><button class="linkbtn test">試しに鳴らす</button></span>';
     li.querySelector('b').textContent=label(s);
-    li.querySelector('small').textContent=name+'　未接続';
+    li.querySelector('small').textContent=dispName(name)+'　未接続';
     li.querySelector('.rename').onclick=()=>renameSensor(s);
     li.querySelector('.forget').onclick=()=>forgetSensor(name);
     const song=songFor(s);
@@ -548,7 +571,7 @@ let lib=[];               // [{id,name,type,size}]
 const urlCache={};        // id -> objectURL
 let sheetTarget=null;
 function songById(id){ return lib.find(x=>x.id===id); }
-function songFor(s){ const id=S.assign&&S.assign[rawName(s)]; return id?songById(id):null; }
+function songFor(s){ const id=S.assign&&S.assign[skey(s)]; return id?songById(id):null; }
 async function urlForId(id){
   if(urlCache[id]) return urlCache[id];
   const rec=await kvGet('song:'+id); const m=songById(id);
@@ -597,7 +620,7 @@ async function removeSong(id){
 }
 function assign(s,id){
   S.assign=S.assign||{};
-  if(id) S.assign[rawName(s)]=id; else delete S.assign[rawName(s)];
+  if(id) S.assign[skey(s)]=id; else delete S.assign[skey(s)];
   save(); renderSensors(); schedulePrepare();
   const song=songById(id);
   toast(label(s)+'の曲を「'+(song?song.name:'内蔵アラーム')+'」にしました');
@@ -661,7 +684,7 @@ function renameSensor(s){
   if(v===null) return;
   v=v.trim();
   S.names = S.names || {};
-  if(v) S.names[rawName(s)]=v; else delete S.names[rawName(s)];
+  if(v) S.names[skey(s)]=v; else delete S.names[skey(s)];
   save(); renderSensors();
 }
 
@@ -694,6 +717,7 @@ async function connect(){
              ifishCount:null, idleSet:new Set(), lastHit:0, state:'connecting'};
   s.handler = ev=>onValue(s,ev);
   device.addEventListener('gattserverdisconnected', ()=>onDisconnected(s));
+  migrateKey(s); s.no=0;
   sensors.push(s); renderSensors(); const sg=songFor(s); if(sg) urlForId(sg.id);
   await openGatt(s);
 }
