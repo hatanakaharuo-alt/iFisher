@@ -94,6 +94,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
   background:var(--bg);color:var(--ink);text-align:center;padding:24px
 }
 #overlay.show{display:flex}
+#overlay.lost .squidAnim{display:none}
 .hitword{color:var(--hit);font-weight:900;font-size:64px;line-height:1;letter-spacing:.02em;margin:0 0 8px;font-family:"Arial Black","Helvetica Neue",system-ui,sans-serif}
 .show .hitword,.st-hit .stage .hitword{animation:flash .7s steps(2) infinite}
 @keyframes flash{50%{opacity:.25}}
@@ -146,7 +147,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v14</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v15</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -196,7 +197,9 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
       <p class="hint">「次の信号を覚える」を押してから竿先を軽く揺らすと、そのとき届いたデータがヒット信号として登録されます。</p>
     </div>
     <div class="row"><label for="cool">連続ヒットを無視する秒数</label><input type="number" id="cool" min="0" max="120" value="3" inputmode="numeric"></div>
-    <div class="row"><label for="warn">接続が切れたら警告音を鳴らす</label><input type="checkbox" id="warn" checked></div>
+    <div class="row"><label for="warn">接続が切れたら音で知らせる</label><input type="checkbox" id="warn" checked></div>
+    <div class="row" style="flex-wrap:wrap"><span style="flex:1;min-width:60%">切断時の音：<b id="warnSongName">内蔵の警告音</b></span>
+      <span class="btns" style="margin:0"><button class="btn small" id="warnPick">曲</button><button class="btn small" id="warnTest">試す</button></span></div>
   </section>
 
   <section>
@@ -364,7 +367,7 @@ async function playAlarm(url){
 function stopAlarm(){
   clearTimeout(stopT);
   if(audioEl){ audioEl.pause(); try{audioEl.currentTime=0;}catch(e){} }
-  $('#overlay').classList.remove('show');
+  $('#overlay').classList.remove('show','lost');
   renderSensors();
 }
 function warnBeep(){
@@ -549,6 +552,7 @@ async function removeSong(id){
   lib=lib.filter(x=>x.id!==id); await kvSet('lib',lib); await kvDel('song:'+id);
   if(urlCache[id]){ URL.revokeObjectURL(urlCache[id]); delete urlCache[id]; }
   if(S.assign) for(const k in S.assign) if(S.assign[k]===id) delete S.assign[k];
+  if(S.warnSong===id){ delete S.warnSong; renderWarnSong(); }
   save(); renderLib(); renderSensors();
 }
 function assign(s,id){
@@ -570,18 +574,45 @@ function renderLib(){
     ul.appendChild(li);
   });
 }
-function openSheet(s){
-  sheetTarget=s;
-  $('#sheetTitle').textContent=label(s)+'の曲を選ぶ';
-  const cur=songFor(s), ul=$('#sheetList'); ul.innerHTML='';
-  const items=[{id:null,name:'内蔵アラーム'}, ...lib];
+function showSheet(title, curId, defaultName, onPick){
+  sheetTarget={onPick};
+  $('#sheetTitle').textContent=title;
+  const ul=$('#sheetList'); ul.innerHTML='';
+  const items=[{id:null,name:defaultName}, ...lib];
   items.forEach(x=>{
     const li=document.createElement('li'); const btn=document.createElement('button');
-    btn.className='choice'+(((cur&&cur.id)===x.id)||(!cur&&!x.id)?' on':'');
-    btn.textContent=x.name; btn.onclick=()=>{ assign(s,x.id); closeSheet(); };
+    btn.className='choice'+((curId||null)===x.id?' on':'');
+    btn.textContent=x.name; btn.onclick=()=>{ onPick(x.id); closeSheet(); };
     li.appendChild(btn); ul.appendChild(li);
   });
   $('#sheet').classList.add('show');
+}
+function openSheet(s){
+  const cur=songFor(s);
+  showSheet(label(s)+'の曲を選ぶ', cur&&cur.id, '内蔵アラーム', id=>assign(s,id));
+}
+/* 接続が切れたときの音 */
+function warnSong(){ return S.warnSong ? songById(S.warnSong) : null; }
+function renderWarnSong(){ const w=warnSong(); $('#warnSongName').textContent=w?w.name:'内蔵の警告音'; }
+function openWarnSheet(){
+  showSheet('接続が切れたときの音を選ぶ', S.warnSong, '内蔵の警告音', id=>{
+    if(id) S.warnSong=id; else delete S.warnSong;
+    save(); renderWarnSong();
+    toast('接続が切れたときの音を「'+(warnSong()?warnSong().name:'内蔵の警告音')+'」にしました');
+  });
+}
+async function disconnectAlert(s){
+  if(!S.warn) return;
+  const w=warnSong();
+  if(!w){ warnBeep(); return; }
+  const ov=$('#overlay');
+  if(ov.classList.contains('show') && !ov.classList.contains('lost')) return; // ヒット中はヒットの曲を優先
+  $('#dark').classList.remove('show');
+  ov.querySelector('.hitword').textContent='接続切れ';
+  $('#hitWho').textContent = s ? label(s) : 'センサー';
+  $('#hitWhen').textContent=hhmmss();
+  ov.classList.add('lost','show');
+  playAlarm(await urlForId(w.id) || soundUrl);
 }
 function closeSheet(){ $('#sheet').classList.remove('show'); sheetTarget=null; }
 function renameSensor(s){
@@ -703,6 +734,8 @@ function hit(s){
   $('#hitWho').textContent=label(s);
   $('#hitWhen').textContent=hhmmss();
   $('#dark').classList.remove('show');
+  $('#overlay').classList.remove('lost');
+  $('#overlay .hitword').textContent='Hit !!!';
   $('#overlay').classList.add('show');
   setState('hit','ヒット！',label(s)+'　'+hhmmss());
   urlFor(s).then(u=>playAlarm(u));
@@ -720,7 +753,7 @@ function onDisconnected(s){
   if(s.manual) return;
   s.state='lost'; renderSensors();
   toast(label(s)+'の接続が切れました');
-  if(S.warn) warnBeep();
+  disconnectAlert(s);
   scheduleRetry(s);
 }
 function scheduleRetry(s){
@@ -765,7 +798,7 @@ document.addEventListener('visibilitychange',()=>{
   const lost=sensors.filter(s=>!s.virtual && s.state!=='connected' && s.state!=='connecting');
   if(lost.length){
     toast('バックグラウンド中に接続が切れたため、再接続しています');
-    if(S.warn) warnBeep();
+    disconnectAlert(lost[0]);
     lost.forEach(s=>{ clearTimeout(s.retryT); s.manual=false; s.tries=0; openGatt(s); });
   }
   if(sensors.length) requestWake();
@@ -785,11 +818,18 @@ $('#connectBtn').addEventListener('click', connect);
 document.addEventListener('click', e=>{ if(!unlocked && !e.target.closest('#connectBtn')) unlockAudio(); }, true);
 $('#disconnectBtn').addEventListener('click', disconnect);
 $('#sheetClose').addEventListener('click', closeSheet);
+$('#warnPick').addEventListener('click', openWarnSheet);
+$('#warnTest').addEventListener('click', async ()=>{
+  unlockAudio();
+  if(audioEl && !audioEl.paused){ stopAlarm(); return; }
+  const w=warnSong(); if(!w){ ensureAudio(); warnBeep(); return; }
+  playAlarm(await urlForId(w.id) || soundUrl);
+});
 $('#sheet').addEventListener('click', e=>{ if(e.target.id==='sheet') closeSheet(); });
 $('#sheetFile').addEventListener('change', async e=>{
   const f=e.target.files && e.target.files[0]; e.target.value=''; if(!f || !sheetTarget) return;
-  const s=sheetTarget; stopAlarm();
-  const item=await addSong(f); renderLib(); assign(s,item.id); closeSheet();
+  const t=sheetTarget; stopAlarm();
+  const item=await addSong(f); renderLib(); t.onPick(item.id); closeSheet();
 });
 $('#darkBtn').addEventListener('click', ()=>{ requestWake(); $('#dark').classList.add('show'); });
 $('#dark').addEventListener('click', ()=>$('#dark').classList.remove('show'));
@@ -823,6 +863,7 @@ $('#clearLog').addEventListener('click', ()=>{ $('#hitLog').innerHTML=''; $('#rx
   fillForm();
   await loadSound();
   await loadLib();
+  renderWarnSong();
   try{ navigator.storage && navigator.storage.persist && navigator.storage.persist(); }catch(e){}
   setState('idle','未接続','センサーの電源を入れて「センサーに接続」を押してください');
   renderSensors();
