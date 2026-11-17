@@ -151,7 +151,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v19</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v20</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -391,37 +391,50 @@ async function prepareAll(){
   }catch(e){}
 }
 // iOSは「ユーザー操作中に一度再生した」音声だけ後から自動再生できるため、最初のタップで無音再生しておく
-async function unlockAudio(){
+// 最初のタップで無音再生しておく。テスト再生などと同時に走っても衝突しないよう、1つの処理にまとめる
+let unlockP=null, isPlaying=false;
+function unlockAudio(){
   ensureAudio();
   const dc=getDecodeCtx(); if(dc && dc.state!=='running'){ try{ dc.resume(); }catch(e){} }
-  if(unlocked) return;
-  try{
-    audioEl.muted = true;
-    try{ await audioEl.play(); audioEl.pause(); audioEl.currentTime = 0; unlocked = true; }catch(e){}
+  if(unlocked) return Promise.resolve();
+  if(unlockP) return unlockP;
+  unlockP=(async()=>{
+    try{
+      audioEl.muted = true;
+      await audioEl.play();
+      if(!isPlaying){ audioEl.pause(); try{ audioEl.currentTime = 0; }catch(e){} }
+      unlocked = true;
+    }catch(e){}
     audioEl.muted = false;
-  }catch(e){}
-  schedulePrepare();
+    unlockP=null;
+    schedulePrepare();
+  })();
+  return unlockP;
 }
 async function playAlarm(url, once){
   ensureAudio();
   clearTimeout(stopT);
+  isPlaying = true;
+  if(unlockP) await unlockP;
   url = await scaledUrl(url || soundUrl);
   audioEl.muted = false;
   if(url && audioEl.src!==url){ audioEl.src = url; }
   audioEl.loop = once ? false : S.loop;
   try{ audioEl.currentTime = 0; }catch(e){}
+  if(!audioEl.onended) audioEl.onended=()=>{ if(!audioEl.loop) isPlaying=false; };
   try{ await audioEl.play(); }
-  catch(e){ toast('音を再生できません。画面を一度タップしてください'); }
+  catch(e){ isPlaying=false; toast('音を再生できません。画面を一度タップしてください'); }
   if(!once && S.duration>0) stopT = setTimeout(stopAlarm, S.duration*1000);
 }
 function stopAlarm(){
   clearTimeout(stopT);
+  isPlaying = false;
   if(audioEl){ audioEl.pause(); try{audioEl.currentTime=0;}catch(e){} }
   $('#overlay').classList.remove('show','lost');
   renderSensors();
 }
 function warnBeep(){
-  if(audioEl && !audioEl.paused) return; // 曲の再生中は邪魔しない
+  if(isPlaying) return; // 曲の再生中は邪魔しない
   if(!warnUrl) warnUrl=URL.createObjectURL(makeWarnWav());
   playAlarm(warnUrl, true);
 }
@@ -559,7 +572,7 @@ function renderSensors(){
     li.querySelector('.rename').onclick=()=>renameSensor(s);
     const song=songFor(s);
     li.querySelector('.song span').textContent='曲：'+(song ? song.name : '内蔵アラーム');
-    li.querySelector('.test').onclick=async()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(await urlFor(s)); };
+    li.querySelector('.test').onclick=async()=>{ await unlockAudio(); if(isPlaying) stopAlarm(); else playAlarm(await urlFor(s)); };
     li.querySelector('.pick').onclick=()=>openSheet(s);
     list.appendChild(li);
   });
@@ -579,7 +592,7 @@ function renderSensors(){
     li.querySelector('.forget').onclick=()=>forgetSensor(name);
     const song=songFor(s);
     li.querySelector('.song span').textContent='曲：'+(song ? song.name : '内蔵アラーム');
-    li.querySelector('.test').onclick=async()=>{ unlockAudio(); if(audioEl && !audioEl.paused) stopAlarm(); else playAlarm(await urlFor(s)); };
+    li.querySelector('.test').onclick=async()=>{ await unlockAudio(); if(isPlaying) stopAlarm(); else playAlarm(await urlFor(s)); };
     li.querySelector('.pick').onclick=()=>openSheet(s);
     list.appendChild(li);
   });
@@ -913,8 +926,8 @@ $('#disconnectBtn').addEventListener('click', disconnect);
 $('#sheetClose').addEventListener('click', closeSheet);
 $('#warnPick').addEventListener('click', openWarnSheet);
 $('#warnTest').addEventListener('click', async ()=>{
-  unlockAudio();
-  if(audioEl && !audioEl.paused){ stopAlarm(); return; }
+  await unlockAudio();
+  if(isPlaying){ stopAlarm(); return; }
   const w=warnSong(); if(!w){ ensureAudio(); warnBeep(); return; }
   playAlarm(await urlForId(w.id) || soundUrl);
 });
