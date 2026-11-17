@@ -151,7 +151,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v21</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v22</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -705,12 +705,13 @@ function openWarnSheet(){
     toast('接続が切れたときの音を「'+(warnSong()?warnSong().name:'内蔵の警告音')+'」にしました');
   });
 }
-async function disconnectAlert(s){
+async function disconnectAlert(s, replaceHit){
   if(!S.warn) return;
   const w=warnSong();
-  if(!w){ warnBeep(); return; }
   const ov=$('#overlay');
-  if(ov.classList.contains('show') && !ov.classList.contains('lost')) return; // ヒット中はヒットの曲を優先
+  if(replaceHit){ stopAlarm(); }
+  else if(ov.classList.contains('show') && !ov.classList.contains('lost')) return; // 別の竿のヒット中はヒットの曲を優先
+  if(!w){ warnBeep(); return; }
   $('#dark').classList.remove('show');
   ov.querySelector('.hitword').textContent='接続切れ';
   $('#hitWho').textContent = s ? label(s) : 'センサー';
@@ -829,12 +830,13 @@ function onValue(s, ev){
   hit(s);
 }
 
+let lastHitSensor=null;
 function hit(s){
   const now=Date.now();
   if(now-s.lastHit < S.cooldown*1000) return;
-  s.lastHit=now; hitCount++;
+  s.lastHit=now; hitCount++; lastHitSensor=s;
   $('#count').textContent=hitCount;
-  const li=document.createElement('li'); li.innerHTML='<time>'+hhmmss()+'</time><span></span>';
+  const li=document.createElement('li'); s.hitLi=li; li.innerHTML='<time>'+hhmmss()+'</time><span></span>';
   li.querySelector('span').textContent=label(s)+' ヒット';
   $('#hitLog').prepend(li);
   $('#hitWho').textContent=label(s);
@@ -857,8 +859,18 @@ function addRx(src,hex){
 function onDisconnected(s){
   s.server=null;
   if(s.manual) return;
-  s.state='lost'; renderSensors();
+  s.state='lost';
+  // iTAGはボタン長押しで電源が切れる。押した瞬間の信号でヒットになった直後に切れた場合は、
+  // ヒットではなく電源OFFとみなし、ヒットを取り消して接続切れとして知らせる
+  const powerOff = s.lastHit && Date.now()-s.lastHit < 6000 && lastHitSensor===s;
+  if(powerOff){
+    hitCount=Math.max(0,hitCount-1); $('#count').textContent=hitCount;
+    if(s.hitLi) s.hitLi.remove();
+    s.lastHit=0; lastHitSensor=null;
+  }
+  renderSensors();
   scheduleRetry(s);
+  if(powerOff){ toast(label(s)+'の電源が切れました'); disconnectAlert(s, true); return; }
   // 画面が裏にある間や、画面に戻った直後の切断は、iOSがページを止めたことによるもの。
   // すぐに鳴らさず静かに再接続し、一定時間たってもつながらないときだけ知らせる
   if(document.hidden || Date.now()-visibleAt < QUIET_MS){ quietCheck(s); return; }
