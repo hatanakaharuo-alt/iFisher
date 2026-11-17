@@ -151,7 +151,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v20</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v21</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -858,9 +858,22 @@ function onDisconnected(s){
   s.server=null;
   if(s.manual) return;
   s.state='lost'; renderSensors();
+  scheduleRetry(s);
+  // 画面が裏にある間や、画面に戻った直後の切断は、iOSがページを止めたことによるもの。
+  // すぐに鳴らさず静かに再接続し、一定時間たってもつながらないときだけ知らせる
+  if(document.hidden || Date.now()-visibleAt < QUIET_MS){ quietCheck(s); return; }
   toast(label(s)+'の接続が切れました');
   disconnectAlert(s);
-  scheduleRetry(s);
+}
+const QUIET_MS=8000, GRACE_MS=20000;
+let visibleAt=Date.now();
+function quietCheck(s){
+  clearTimeout(s.quietT);
+  s.quietT=setTimeout(()=>{
+    if(document.hidden || s.manual || s.state==='connected' || !sensors.includes(s)) return;
+    toast(label(s)+'の接続が切れています');
+    disconnectAlert(s);
+  }, GRACE_MS);
 }
 function scheduleRetry(s){
   clearTimeout(s.retryT);
@@ -901,11 +914,11 @@ function releaseWake(){ try{ wake && wake.release(); }catch(e){} wake=null; try{
 let hiddenAt=0;
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){ hiddenAt=Date.now(); return; }
+  visibleAt=Date.now();
   const lost=sensors.filter(s=>!s.virtual && s.state!=='connected' && s.state!=='connecting');
   if(lost.length){
-    toast('バックグラウンド中に接続が切れたため、再接続しています');
-    disconnectAlert(lost[0]);
-    lost.forEach(s=>{ clearTimeout(s.retryT); s.manual=false; s.tries=0; openGatt(s); });
+    toast('再接続しています');
+    lost.forEach(s=>{ clearTimeout(s.retryT); s.manual=false; s.tries=0; openGatt(s); quietCheck(s); });
   }
   if(sensors.length) requestWake();
 });
