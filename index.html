@@ -151,7 +151,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v22</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v23</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -786,6 +786,7 @@ async function openGatt(s){
     s.disc = disc;
     $('#discList').innerHTML = sensors.filter(x=>x.disc).map(x=>x.disc.map(t=>'<li>'+t+'</li>').join('')).join('');
     s.connectedAt = Date.now(); s.tries=0; s.idleSet = new Set(); s.state='connected'; schedulePrepare();
+    addRx(label(s), '── 接続しました（'+Math.round(WARMUP_MS/1000)+'秒間はヒット判定しません）');
     if(subs===0) toast(label(s)+'：通知できる特性が見つかりません');
     renderSensors();
     requestWake();
@@ -801,8 +802,9 @@ function onValue(s, ev){
   addRx(label(s)+' '+u, hex);
   const key = u+':'+norm(hex);
   $('#lastRx').textContent = '最新の受信 '+hhmmss()+'　'+label(s)+' '+u+'：'+hex;
-  // 接続後5秒間に届いたデータは「待機中のデータ」として覚え、ヒット判定しない
-  if(Date.now()-s.connectedAt < 5000){
+  // 接続直後に届いたデータは「待機中のデータ」として覚え、ヒット判定しない
+  // （iTAGは電源ONの長押しや起動直後にボタン信号を送ることがあるため、長めに取る）
+  if(Date.now()-s.connectedAt < WARMUP_MS){
     s.idleSet.add(key);
     if(u==='fff1' && c.value.byteLength>=2) s.ifishCount=c.value.getUint8(1);
     return;
@@ -830,6 +832,7 @@ function onValue(s, ev){
   hit(s);
 }
 
+const WARMUP_MS=10000;
 let lastHitSensor=null;
 function hit(s){
   const now=Date.now();
@@ -860,6 +863,7 @@ function onDisconnected(s){
   s.server=null;
   if(s.manual) return;
   s.state='lost';
+  addRx(label(s), '── 接続が切れました');
   // iTAGはボタン長押しで電源が切れる。押した瞬間の信号でヒットになった直後に切れた場合は、
   // ヒットではなく電源OFFとみなし、ヒットを取り消して接続切れとして知らせる
   const powerOff = s.lastHit && Date.now()-s.lastHit < 6000 && lastHitSensor===s;
