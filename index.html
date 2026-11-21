@@ -151,7 +151,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v24</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v25</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -705,6 +705,7 @@ function openWarnSheet(){
     toast('接続が切れたときの音を「'+(warnSong()?warnSong().name:'内蔵の警告音')+'」にしました');
   });
 }
+let lostAlertSensor=null;
 async function disconnectAlert(s, replaceHit){
   if(!S.warn) return;
   const w=warnSong();
@@ -716,7 +717,7 @@ async function disconnectAlert(s, replaceHit){
   ov.querySelector('.hitword').textContent='接続切れ';
   $('#hitWho').textContent = s ? label(s) : 'センサー';
   $('#hitWhen').textContent=hhmmss();
-  ov.classList.add('lost','show');
+  ov.classList.add('lost','show'); lostAlertSensor=s;
   playAlarm(await urlForId(w.id) || soundUrl);
 }
 function closeSheet(){ $('#sheet').classList.remove('show'); sheetTarget=null; }
@@ -787,6 +788,12 @@ async function openGatt(s){
     $('#discList').innerHTML = sensors.filter(x=>x.disc).map(x=>x.disc.map(t=>'<li>'+t+'</li>').join('')).join('');
     s.connectedAt = Date.now(); s.tries=0; s.idleSet = new Set(); s.state='connected'; schedulePrepare();
     addRx(label(s), '── 接続しました（'+Math.round(WARMUP_MS/1000)+'秒間はヒット判定しません）');
+    // 接続切れの曲が鳴っている最中に、その竿（または切れていた全ての竿）が再接続したら、曲を止めてヒット待ちに戻る
+    const ov=$('#overlay');
+    if(ov.classList.contains('show') && ov.classList.contains('lost')){
+      const stillLost=sensors.some(x=>!x.virtual && x!==s && x.state!=='connected');
+      if(lostAlertSensor===s || !stillLost){ lostAlertSensor=null; stopAlarm(); toast(label(s)+'に再接続しました'); }
+    }
     if(subs===0) toast(label(s)+'：通知できる特性が見つかりません');
     renderSensors();
     requestWake();
