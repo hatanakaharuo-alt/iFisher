@@ -155,7 +155,7 @@ details summary{cursor:pointer;font-weight:700;padding:6px 0}
 </head>
 <body>
 <main id="app" class="st-idle">
-  <h1>アオリイカセンサー <small style="font-weight:400">v26</small></h1>
+  <h1>アオリイカセンサー <small style="font-weight:400">v27</small></h1>
 
   <div id="noBle" class="notice" hidden>
     <b>このブラウザはBluetoothに対応していません。</b><br>
@@ -853,7 +853,7 @@ function onValue(s, ev){
   hit(s);
 }
 
-const WARMUP_MS=5000;
+const WARMUP_MS=3000;
 let lastHitSensor=null;
 function hit(s){
   const now=Date.now();
